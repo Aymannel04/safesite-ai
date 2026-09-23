@@ -1,2 +1,3 @@
 Day 2: Git branching + merge conflict resolved, GitHub repo live (safesite-ai), venv + logging module built, first PR merged. Caught venv/__pycache__ before committing, added .gitignore.
 Day 3: Docker Compose with Postgres + Adminer, volumes and networks understood and proven empirically (data survived a full container down/up cycle).
+Day 4: Designed and built cameras/violations schema with constraints (proved CHECK and FK work by triggering real rejections). Seeded 5000 fake violations via psycopg2. Wrote 5 real dashboard queries (WHERE/ORDER BY/GROUP BY/JOIN/DATE_TRUNC). Learned indexes are a cost-based planner decision, not automatic - proved Seq Scan vs Index Scan directly with EXPLAIN ANALYZE.
