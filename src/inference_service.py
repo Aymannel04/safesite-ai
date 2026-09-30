@@ -1,44 +1,49 @@
 """
 CV integration: runs detection + tracking on a video, converts the raw
 per-frame output into deduplicated violation episodes (src/episodes.py),
-saves one evidence frame per episode, and POSTs each as a Violation event
-matching docs/contracts.md (Violation Event Contract v1).
+saves one evidence frame per episode, and publishes each as a Violation
+event (matching docs/contracts.md, Violation Event Contract v1) onto the
+Kafka `events` topic.
+
+Design change (Day 16): this used to POST directly to the API. It now
+publishes to Kafka instead, so the CV pipeline never blocks on or depends
+on the API being up. A separate consumer (src/event_consumer.py) reads
+from `events` and does the actual POST - see that file's docstring for why.
 
 Known simplification: this is offline batch processing, not a live stream,
 so timestamps are synthesized from the script's start time + frame offset
 (frame_idx / fps), not real wall-clock capture times. Live timestamps
-arrive in Week 3 when ingestion reads a real/simulated camera stream.
+arrive later in Week 3 when ingestion reads a real/simulated camera stream.
 """
 
+import json
 import os
 from datetime import datetime, timedelta
 
 import cv2
-import requests
+from kafka import KafkaProducer
 from ultralytics import YOLO
 
 from src.episodes import detect_episodes
 
 MODEL_PATH = "models/yolov8s_ppe_v1.pt"
 VIDEO_PATH = "data/samples/test_video.mp4"
-API_URL = "http://localhost:8000/violations"
+KAFKA_BROKER = "localhost:9092"
+EVENTS_TOPIC = "events"
 EVIDENCE_DIR = "data/evidence"
-CAMERA_ID = 1  # single test camera for this offline run
+CAMERA_ID = 1
 
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 
 def run_detection_and_tracking():
-    """Runs YOLO+ByteTrack on the video, returns a flat list of
-    (frame_idx, track_id, label) tuples. label is the class name if it
-    starts with "NO-" (a violation), otherwise None (compliant)."""
     model = YOLO(MODEL_PATH)
     results = model.track(source=VIDEO_PATH, tracker="bytetrack.yaml", stream=True, verbose=False)
 
     detections = []
     for frame_idx, result in enumerate(results):
         if result.boxes.id is None:
-            continue  # no confirmed tracks in this frame yet
+            continue
         for box in result.boxes:
             track_id = int(box.id.item())
             class_name = result.names[int(box.cls.item())]
@@ -49,7 +54,6 @@ def run_detection_and_tracking():
 
 
 def save_evidence_frame(video_path, frame_idx, track_id):
-    """Extracts and saves one frame as a jpg, returns its file path."""
     cap = cv2.VideoCapture(video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
     ret, frame = cap.read()
@@ -65,6 +69,11 @@ def main():
     cap = cv2.VideoCapture(VIDEO_PATH)
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
+
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_BROKER,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+    )
 
     print("Running detection + tracking...")
     detections = run_detection_and_tracking()
@@ -92,8 +101,10 @@ def main():
             "evidence_uri": evidence_path,
         }
 
-        response = requests.post(API_URL, json=payload)
-        print(f"Track {ep['track_id']} | {ep['violation_type']} | POST status {response.status_code}")
+        producer.send(EVENTS_TOPIC, value=payload)
+        print(f"Published: Track {ep['track_id']} | {ep['violation_type']}")
+
+    producer.flush()
 
 
 if __name__ == "__main__":
