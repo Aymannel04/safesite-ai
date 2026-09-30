@@ -56,3 +56,31 @@ a replay of the old ones) — proving Kafka remembers a consumer group's progres
 across restarts, which is the actual property that will matter once a real
 ingestion service is reading from this pipeline and needs to survive crashes
 without losing or duplicating data.
+
+## Day 16 — Decoupling the CV Pipeline from the API via Kafka
+
+Wired Kafka into the real pipeline instead of just testing it in isolation.
+inference_service.py no longer calls requests.post() directly against the
+API — it now publishes each violation event as JSON onto the Kafka `events`
+topic and moves on immediately. A new script, event_consumer.py, subscribes
+to `events` and does the actual POST to the API, using the consumer group
+pattern proven out on Day 15.
+
+The reason: a direct HTTP call ties the CV pipeline's success to the API
+being up and responsive at that exact moment. Putting Kafka in between means
+the pipeline never blocks on or depends on anything downstream — it just
+publishes and trusts Kafka to hold the data safely.
+
+Proved this wasn't just theoretical: killed the consumer, reran the full
+detection+tracking+episode pipeline (11 violations, same as Day 14's run),
+and confirmed via curl that the database did not grow at all — the 11 new
+events were sitting safely in Kafka with nothing to read them. Restarted
+the consumer and watched it immediately process all 11 backlogged events
+(POST status 200 each), confirmed by the violation count in the database
+jumping by exactly 11. Zero data loss, zero duplicates, no manual
+intervention needed to recover.
+
+This is the actual point of this whole Kafka detour: the pipeline is now
+resilient to the API or its consumer going down temporarily, which matters
+once this is running unattended against a real camera stream instead of a
+single test video.
