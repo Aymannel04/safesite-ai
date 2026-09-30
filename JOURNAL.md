@@ -22,3 +22,37 @@ Designed and implemented src/episodes.py: converts a raw (frame_idx, track_id, l
 
 ## Day 14 — CV integration (Checkpoint B)
 Built src/inference_service.py: runs the fine-tuned model with ByteTrack on the test video, feeds raw (frame_idx, track_id, label) detections into Day 13's detect_episodes(), saves one evidence frame per episode, and POSTs each as a Violation event to the FastAPI service. Discovered the violations.violation_type column has no CHECK constraint (just TEXT NOT NULL) - decided to use the AI's real class names (e.g. "NO-Safety Vest") as the canonical convention going forward rather than matching Day 4's legacy seed.py naming ("no_vest"), accepting that old fake rows now use an inconsistent older convention. Full pipeline run end to end: 1704 raw detections -> 11 violation episodes -> 11 successful POSTs -> verified all 11 landed in Postgres with matching evidence files on disk. This is Checkpoint B: video -> detection -> tracking -> deduplication -> database, working and verified, not just claimed. Known simplification documented: timestamps are synthesized from script run time + frame offset since this is offline batch processing, not a live stream (arrives Week 3).
+
+## Day 15 — Kafka Setup & the Consumer Offset Bug
+
+Added Apache Kafka (KRaft mode, single-node, no Zookeeper) to docker-compose.yml,
+alongside the existing Postgres/Adminer services. Created two topics, `frames`
+and `events`, matching the two data flows the streaming pipeline will need:
+raw frame metadata and detected violation events.
+
+Hit a real bug testing basic produce/consume with the CLI tools: messages sent
+via kafka-console-producer.sh never appeared in kafka-console-consumer.sh, even
+with --from-beginning, even sent non-interactively via a piped echo command.
+Topic health checks (kafka-topics.sh --describe) came back completely clean,
+which ruled out a broken topic and pointed toward something server-side.
+
+Root cause, found in `docker compose logs kafka`: Kafka couldn't create its
+internal `__consumer_offsets` topic (where every consumer group's read progress
+is tracked) because that topic defaults to a replication factor of 3, and this
+single-node dev cluster only has 1 broker. Kafka retried and failed to create
+it every second, forever, which meant consumers could never register progress
+and just sat silently deaf — looking exactly like "messages aren't arriving,"
+even though the producer side worked the entire time.
+
+Fix: set KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 in docker-compose.yml, since
+a single broker can only ever hold 1 copy anyway. After that, produce/consume
+worked immediately.
+
+Followed up with a Python producer/consumer pair (kafka-python) sending real
+JSON messages instead of plain strings, then explicitly tested consumer group
+offset persistence: ran the consumer, killed it, produced a new batch while it
+was down, restarted it, and confirmed it picked up only the new messages (not
+a replay of the old ones) — proving Kafka remembers a consumer group's progress
+across restarts, which is the actual property that will matter once a real
+ingestion service is reading from this pipeline and needs to survive crashes
+without losing or duplicating data.
