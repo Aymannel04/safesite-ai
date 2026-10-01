@@ -178,3 +178,54 @@ only the ones that qualified as violations. Verified via a live run: bronze
 held one file per closed track (~280 files), silver held exactly 29 files,
 matching the 29 "Closed track -> Published" lines printed during the run -
 confirming the filtering logic works correctly, not just assumed.
+
+## Days 20-21 — Checkpoint C: Reliability Review
+
+Closed out Week 3 with a deliberate reliability review of the live
+streaming pipeline (not the offline batch one) - three targeted failure
+tests, each with a prediction made before testing, verified against real
+output rather than assumed from good architecture alone. Full writeup in
+docs/reliability_review.md.
+
+Found and fixed a genuine silent-data-loss bug: event_consumer.py relied
+on Kafka's default auto-commit, which advances past a message the instant
+it's handed to the consumer loop - regardless of whether the code actually
+succeeded at anything with it. Killing Postgres mid-stream proved this:
+the API returned 500, the consumer logged it and moved on, and the
+violation was permanently gone once Postgres came back - Kafka had already
+considered it delivered. Fixed with manual offset commits, retry-with-
+backoff, and a dead-letter file for anything that still fails, plus a
+replay script. Re-verified the full loss-and-recovery loop live.
+
+Tested Kafka itself going down from both sides of the pipeline: a fresh
+consumer fails loudly and immediately (good - unambiguous, restart-able).
+The live producer, already running, failed completely silently - send() is
+async and the code never checked the result - but, surprisingly, fully
+recovered every backlogged event once Kafka came back, because kafka-
+python buffers unsent messages in memory and retries automatically. The
+real finding wasn't data loss here, it was the complete lack of visibility:
+that backlog could grow for a long time with zero signal, and only
+survives as long as the producing process itself doesn't crash or restart
+during the outage - a real blind spot for production.
+
+Measured actual live throughput instead of assuming the pipeline was fast
+enough: 6.33 fps against a 29.97 fps source, only 21.1% of real-time.
+Isolated the cause by measuring decode-only (no model) separately: 58.0%,
+revealing two stacked bottlenecks instead of one. Investigating led to
+finding a real, independent bug: model.device reported "cpu" despite
+torch.cuda.is_available() being True - Ultralytics' model.track() was
+never explicitly told to use the GPU, so it had been running on CPU this
+entire project, including Checkpoints A and B, without ever affecting
+detection quality (only speed), which is exactly why it went unnoticed.
+Fixed by adding device=0 to every model.track() call; re-measured at 34.9%
+of real-time, confirmed via re-running the batch pipeline that results
+were unchanged (1704 detections, 11 episodes either way). Documented the
+remaining gap (now decode-bound, not inference-bound) as a known
+limitation requiring GPU-accelerated video decode to fully close - real
+infrastructure work, correctly out of scope to improvise today.
+
+Reaching Checkpoint C this way - actually breaking things on purpose and
+measuring real numbers, rather than assuming the architecture was
+resilient and fast because it was designed with Kafka and a GPU in mind -
+is exactly the discipline this whole project has tried to practice since
+Day 1, and it caught two genuinely significant, previously invisible bugs.
