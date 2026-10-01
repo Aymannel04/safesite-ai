@@ -128,3 +128,41 @@ Known simplification carried forward: evidence frame extraction isn't
 implemented yet for the live path (evidence_uri is null), since the
 batch script's seek-to-frame approach doesn't apply to a live stream that
 isn't being buffered.
+
+## Day 19 — Data Lake: Bronze and Silver Tiers via LocalStack
+
+Added a data lake layer so raw pipeline output stops disappearing once
+processed. Concept: bronze is raw, untouched data (here: per-frame
+detections exactly as the model produced them, before any cleaning);
+silver is cleaned, decision-ready data (here: the deduplicated violation
+episodes from episodes.py, same data that goes to Kafka/Postgres, archived
+independently). Gold (aggregated, dashboard-ready summaries) is deferred to
+Week 4 alongside the Streamlit dashboard, since gold is shaped around
+whatever's consuming it, and that consumer doesn't exist yet.
+
+The actual motivation: right now, once detect_episodes() runs, the raw
+per-frame detections are gone forever. If a bug is ever found in the
+episode-detection logic (like Day 12's label-flicker discovery), there
+would be nothing to reprocess from. Bronze storage fixes that.
+
+Hit two real infrastructure surprises getting the storage layer itself
+running, both from changes that happened industry-wide just days before
+this session:
+1. MinIO removed its images from both Docker Hub (Sept 11) and Quay
+   (Sept 24) entirely - no amount of correct docker-compose config would
+   have worked, since the images themselves no longer exist publicly.
+2. Pivoted to LocalStack (an AWS emulator, using the real boto3 SDK -
+   arguably more transferable than MinIO's own client would have been),
+   but :latest now requires a LocalStack account and auth token after
+   their community/pro tier merge in March 2026. Fixed by pinning to
+   4.4.0, the last version before that merge.
+
+Both were genuine "the ground shifted under a standard tutorial" problems,
+diagnosed via actual error logs and targeted searches rather than guessing -
+same debugging discipline as the Kafka and RTSP issues earlier this week.
+
+Verified end to end: ran inference_service.py, confirmed via a separate
+boto3 listing script that bronze/<run_id>/detections.json (29.9KB, all 1704
+raw detections) and silver/<run_id>/episodes.json (1.4KB, all 11 cleaned
+episodes) both landed in the safesite-datalake bucket, while the existing
+Kafka -> consumer -> API -> Postgres path kept working unchanged alongside it.
