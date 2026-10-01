@@ -62,7 +62,7 @@ def archive_to_s3(s3, key, data):
 
 def run_detection_and_tracking():
     model = YOLO(MODEL_PATH)
-    results = model.track(source=VIDEO_PATH, tracker="bytetrack.yaml", stream=True, verbose=False)
+    results = model.track(source=VIDEO_PATH, tracker="bytetrack.yaml", stream=True, verbose=False, device=0)
 
     detections = []
     for frame_idx, result in enumerate(results):

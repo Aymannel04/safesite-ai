@@ -78,7 +78,7 @@ def main():
     track_buffers = defaultdict(list)  # track_id -> list of (frame_idx, label)
     last_seen = {}  # track_id -> frame_idx it was last seen in
 
-    results = model.track(source=RTSP_URL, tracker="bytetrack.yaml", stream=True, verbose=False)
+    results = model.track(source=RTSP_URL, tracker="bytetrack.yaml", stream=True, verbose=False, device=0)
 
     print("Live inference started. Press Ctrl+C to stop.")
 
