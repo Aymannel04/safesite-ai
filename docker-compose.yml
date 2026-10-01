@@ -36,7 +36,11 @@ services:
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: safesite-mediamtx
+    ports:
+      - "8554:8554"
+
 volumes:
   postgres_data:
-
-
