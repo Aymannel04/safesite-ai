@@ -84,3 +84,47 @@ This is the actual point of this whole Kafka detour: the pipeline is now
 resilient to the API or its consumer going down temporarily, which matters
 once this is running unattended against a real camera stream instead of a
 single test video.
+
+## Day 17-18 — From Batch File to Live RTSP Stream
+
+Replaced the static test video file with a real streaming source. Added
+MediaMTX (a lightweight RTSP server) to docker-compose.yml, and used ffmpeg
+to loop the existing test video and push it into MediaMTX as a simulated
+live camera feed (`-re -stream_loop -1 ... -rtsp_transport tcp`). The
+`-rtsp_transport tcp` flag was required after an initial attempt failed:
+RTSP's default UDP transport uses dynamically-negotiated ports that Docker's
+port mapping never exposed, so the stream died with a broken pipe a few
+seconds in. Forcing RTSP to tunnel everything through the single mapped TCP
+port fixed it immediately.
+
+Confirmed the stream was genuinely readable at two levels before touching
+the real pipeline: raw OpenCV (`cv2.VideoCapture`) and then `model.track()`
+itself, both pointed directly at the RTSP URL instead of a file path.
+
+The real engineering problem this phase was about: `episodes.py`'s original
+design assumed a finished, complete list of detections (fine for a batch
+file, since you only call it after reading the whole video). A live stream
+never finishes, so there's no "video ended" moment to wait for. Solved this
+by refactoring the per-track majority-vote decision into its own reusable
+function (`evaluate_track`), then built `live_inference_service.py`, which
+tracks every open track's buffered frames and "closes" a track (runs the
+same violation decision, publishes to Kafka if it qualifies) once that
+track hasn't been seen for TRACK_TIMEOUT frames - i.e., it's inferred the
+person left the scene or tracking lost them. Confirmed via the existing
+7-test suite that this refactor didn't change the batch pipeline's behavior
+at all.
+
+Ran the full live chain for ~40 seconds: ffmpeg -> MediaMTX -> live YOLO
+tracking -> online episode closing -> Kafka `events` -> event_consumer.py
+-> API -> Postgres. Every closed track with a violation was published and
+POSTed successfully (confirmed via the consumer's 200 statuses and the
+violation count in the database growing from 5038 to 5436). Also noted and
+understood why track IDs climbed so fast: the looped video creates an
+abrupt discontinuity every ~4.84 seconds that ByteTrack has no way to
+recognize as "the same video restarting," so it assigns entirely new IDs
+every loop - a real tracker limitation, not a bug in this code.
+
+Known simplification carried forward: evidence frame extraction isn't
+implemented yet for the live path (evidence_uri is null), since the
+batch script's seek-to-frame approach doesn't apply to a live stream that
+isn't being buffered.
