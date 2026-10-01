@@ -42,5 +42,16 @@ services:
     ports:
       - "8554:8554"
 
+  localstack:
+    image: localstack/localstack:4.4.0
+    container_name: safesite-localstack
+    environment:
+      SERVICES: s3
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+
 volumes:
   postgres_data:
+  localstack_data:

@@ -5,21 +5,26 @@ saves one evidence frame per episode, and publishes each as a Violation
 event (matching docs/contracts.md, Violation Event Contract v1) onto the
 Kafka `events` topic.
 
-Design change (Day 16): this used to POST directly to the API. It now
-publishes to Kafka instead, so the CV pipeline never blocks on or depends
-on the API being up. A separate consumer (src/event_consumer.py) reads
-from `events` and does the actual POST - see that file's docstring for why.
+Day 19: also archives two tiers of this run's data to the data lake
+(LocalStack S3-compatible storage, bucket `safesite-datalake`):
+  - bronze/: the raw per-frame detections, exactly as the model produced
+    them, before any cleaning or decision-making. Kept so that if a bug is
+    ever found in the episode-detection logic, this run can be reprocessed
+    from the original raw output instead of being lost forever.
+  - silver/: the cleaned, deduplicated violation episodes - the same data
+    that gets published to Kafka and stored in Postgres, archived here too
+    so the data lake has a complete, independent record of what happened.
 
 Known simplification: this is offline batch processing, not a live stream,
 so timestamps are synthesized from the script's start time + frame offset
-(frame_idx / fps), not real wall-clock capture times. Live timestamps
-arrive later in Week 3 when ingestion reads a real/simulated camera stream.
+(frame_idx / fps), not real wall-clock capture times.
 """
 
 import json
 import os
 from datetime import datetime, timedelta
 
+import boto3
 import cv2
 from kafka import KafkaProducer
 from ultralytics import YOLO
@@ -33,7 +38,26 @@ EVENTS_TOPIC = "events"
 EVIDENCE_DIR = "data/evidence"
 CAMERA_ID = 1
 
+S3_ENDPOINT = "http://localhost:4566"
+S3_BUCKET = "safesite-datalake"
+
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
+
+
+def get_s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+        region_name="us-east-1",
+    )
+
+
+def archive_to_s3(s3, key, data):
+    """Uploads a Python object as JSON to the given S3 key."""
+    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=json.dumps(data).encode("utf-8"))
+    print(f"Archived to s3://{S3_BUCKET}/{key}")
 
 
 def run_detection_and_tracking():
@@ -70,6 +94,9 @@ def main():
     fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
+    run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
+
+    s3 = get_s3_client()
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
@@ -79,8 +106,12 @@ def main():
     detections = run_detection_and_tracking()
     print(f"Collected {len(detections)} raw detections")
 
+    archive_to_s3(s3, f"bronze/{run_id}/detections.json", detections)
+
     episodes = detect_episodes(detections)
     print(f"Detected {len(episodes)} violation episodes")
+
+    archive_to_s3(s3, f"silver/{run_id}/episodes.json", episodes)
 
     run_start_time = datetime.now()
 
