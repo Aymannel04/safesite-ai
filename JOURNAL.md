@@ -166,3 +166,15 @@ boto3 listing script that bronze/<run_id>/detections.json (29.9KB, all 1704
 raw detections) and silver/<run_id>/episodes.json (1.4KB, all 11 cleaned
 episodes) both landed in the safesite-datalake bucket, while the existing
 Kafka -> consumer -> API -> Postgres path kept working unchanged alongside it.
+
+**Addendum**: Ayman caught that the data lake archiving only existed in the
+batch inference_service.py, not the live streaming pipeline from Days 17-18
+- a real gap, since the point of the reliability review in Days 20-21 is to
+test the actual production path (live streaming), not the offline one.
+Fixed by archiving per-track instead of per-run in live_inference_service.py
+(since a live stream has no single "finished" moment to archive everything
+at once): bronze gets every closed track regardless of outcome, silver gets
+only the ones that qualified as violations. Verified via a live run: bronze
+held one file per closed track (~280 files), silver held exactly 29 files,
+matching the 29 "Closed track -> Published" lines printed during the run -
+confirming the filtering logic works correctly, not just assumed.
