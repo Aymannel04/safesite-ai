@@ -19,16 +19,22 @@ app = FastAPI(title="SafeSite AI API")
 class Violation(BaseModel):
     id: int
     camera_id: int
+    track_id: Optional[int] = None
     violation_type: str
     confidence: float
     started_at: datetime
+    ended_at: Optional[datetime] = None
+    evidence_uri: Optional[str] = None
 
 
 class ViolationCreate(BaseModel):
     camera_id: int
+    track_id: Optional[int] = None
     violation_type: str
     confidence: float = Field(ge=0, le=1)
     started_at: datetime
+    ended_at: Optional[datetime] = None
+    evidence_uri: Optional[str] = None
 
 
 def get_connection():
@@ -46,7 +52,7 @@ def list_violations(camera_id: Optional[int] = None, violation_type: Optional[st
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    query = "SELECT id, camera_id, violation_type, confidence, started_at FROM violations WHERE 1=1"
+    query = "SELECT id, camera_id, track_id, violation_type, confidence, started_at, ended_at, evidence_uri FROM violations WHERE 1=1"
     params = []
     if camera_id is not None:
         query += " AND camera_id = %s"
@@ -70,11 +76,19 @@ def create_violation(violation: ViolationCreate):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
         """
-        INSERT INTO violations (camera_id, violation_type, confidence, started_at)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id, camera_id, violation_type, confidence, started_at
+        INSERT INTO violations (camera_id, track_id, violation_type, confidence, started_at, ended_at, evidence_uri)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id, camera_id, track_id, violation_type, confidence, started_at, ended_at, evidence_uri
         """,
-        (violation.camera_id, violation.violation_type, violation.confidence, violation.started_at),
+        (
+            violation.camera_id,
+            violation.track_id,
+            violation.violation_type,
+            violation.confidence,
+            violation.started_at,
+            violation.ended_at,
+            violation.evidence_uri,
+        ),
     )
     row = cur.fetchone()
     conn.commit()
