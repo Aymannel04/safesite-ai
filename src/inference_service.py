@@ -20,6 +20,7 @@ so timestamps are synthesized from the script's start time + frame offset
 (frame_idx / fps), not real wall-clock capture times.
 """
 
+import argparse
 import json
 import os
 from datetime import datetime, timedelta
@@ -139,4 +140,12 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--camera-id", type=int, default=CAMERA_ID)
+    parser.add_argument("--video", type=str, default=VIDEO_PATH)
+    args = parser.parse_args()
+
+    CAMERA_ID = args.camera_id
+    VIDEO_PATH = args.video
+
     main()
