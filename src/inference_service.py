@@ -100,9 +100,9 @@ def save_evidence_frame(video_path, frame_idx, track_id, bbox=None, label=None):
 
     if bbox is not None:
         x1, y1, x2, y2 = [int(v) for v in bbox]
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 3)
         if label is not None:
-            cv2.putText(frame, label, (x1, max(y1 - 10, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+            cv2.putText(frame, label, (x1, max(y1 - 10, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
 
     path = f"{EVIDENCE_DIR}/track{track_id}_frame{frame_idx}.jpg"
     cv2.imwrite(path, frame)
