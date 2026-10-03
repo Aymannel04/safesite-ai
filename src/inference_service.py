@@ -66,6 +66,7 @@ def run_detection_and_tracking():
     results = model.track(source=VIDEO_PATH, tracker="bytetrack.yaml", stream=True, verbose=False, device=0)
 
     detections = []
+    bbox_lookup = {}
     for frame_idx, result in enumerate(results):
         if result.boxes.id is None:
             continue
@@ -74,17 +75,25 @@ def run_detection_and_tracking():
             class_name = result.names[int(box.cls.item())]
             label = class_name if class_name.startswith("NO-") else None
             detections.append((frame_idx, track_id, label))
+            bbox_lookup[(track_id, frame_idx)] = tuple(box.xyxy[0].tolist())
 
-    return detections
+    return detections, bbox_lookup
 
 
-def save_evidence_frame(video_path, frame_idx, track_id):
+def save_evidence_frame(video_path, frame_idx, track_id, bbox=None, label=None):
     cap = cv2.VideoCapture(video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
     ret, frame = cap.read()
     cap.release()
     if not ret:
         return None
+
+    if bbox is not None:
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        if label is not None:
+            cv2.putText(frame, label, (x1, max(y1 - 10, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+
     path = f"{EVIDENCE_DIR}/track{track_id}_frame{frame_idx}.jpg"
     cv2.imwrite(path, frame)
     return path
@@ -104,7 +113,7 @@ def main():
     )
 
     print("Running detection + tracking...")
-    detections = run_detection_and_tracking()
+    detections, bbox_lookup = run_detection_and_tracking()
     print(f"Collected {len(detections)} raw detections")
 
     archive_to_s3(s3, f"bronze/{run_id}/detections.json", detections)
@@ -118,7 +127,13 @@ def main():
 
     for ep in episodes:
         mid_frame = (ep["start_frame"] + ep["end_frame"]) // 2
-        evidence_path = save_evidence_frame(VIDEO_PATH, mid_frame, ep["track_id"])
+        bbox = bbox_lookup.get((ep["track_id"], mid_frame))
+        if bbox is None:
+            candidates = [f for (tid, f) in bbox_lookup if tid == ep["track_id"]]
+            if candidates:
+                nearest = min(candidates, key=lambda f: abs(f - mid_frame))
+                bbox = bbox_lookup[(ep["track_id"], nearest)]
+        evidence_path = save_evidence_frame(VIDEO_PATH, mid_frame, ep["track_id"], bbox=bbox, label=ep["violation_type"])
 
         started_at = run_start_time + timedelta(seconds=ep["start_frame"] / fps)
         ended_at = run_start_time + timedelta(seconds=ep["end_frame"] / fps)

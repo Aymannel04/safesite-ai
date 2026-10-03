@@ -29,7 +29,7 @@ def load_violations():
         password=os.environ["POSTGRES_PASSWORD"],
     )
     df = pd.read_sql_query(
-        "SELECT id, camera_id, violation_type, confidence, started_at FROM violations ORDER BY started_at DESC",
+        "SELECT id, camera_id, track_id, violation_type, confidence, started_at, evidence_uri FROM violations ORDER BY started_at DESC",
         conn,
     )
     conn.close()
@@ -73,3 +73,26 @@ st.line_chart(timeline)
 # --- Table ---
 st.subheader("Recent violations")
 st.dataframe(filtered.head(100), use_container_width=True)
+
+# --- Evidence viewer ---
+st.subheader("Evidence viewer")
+if len(filtered) > 0:
+    options = filtered.head(100).apply(
+        lambda row: f"#{row['id']} | camera {row['camera_id']} | {row['violation_type']} | {row['started_at']}",
+        axis=1,
+    ).tolist()
+    selected = st.selectbox("Pick a violation to inspect", options)
+    selected_id = int(selected.split("|")[0].strip().lstrip("#"))
+    row = filtered[filtered["id"] == selected_id].iloc[0]
+
+    if pd.notna(row["evidence_uri"]) and os.path.exists(row["evidence_uri"]):
+        track_label = int(row["track_id"]) if pd.notna(row["track_id"]) else "N/A"
+        st.image(
+            row["evidence_uri"],
+            caption=f"Track {track_label} - {row['violation_type']} ({row['confidence']:.2f} confidence)",
+            width=500,
+        )
+    else:
+        st.info("No evidence image available for this violation (recorded before evidence tracking was fixed, or file missing).")
+else:
+    st.info("No violations match the current filters.")
