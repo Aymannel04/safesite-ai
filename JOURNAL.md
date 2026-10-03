@@ -229,3 +229,34 @@ measuring real numbers, rather than assuming the architecture was
 resilient and fast because it was designed with Kafka and a GPU in mind -
 is exactly the discipline this whole project has tried to practice since
 Day 1, and it caught two genuinely significant, previously invisible bugs.
+
+## Day 22 - Week 4 start: dashboard, multi-camera, MLflow
+
+### Built
+- Streamlit dashboard (src/dashboard.py): sidebar filters (camera, violation type), 3 KPI cards, violations by type, violations over time, recent table, evidence viewer. Reads Postgres directly; @st.cache_data(ttl=10) avoids re-querying on every rerun.
+- Multi-camera: inference_service.py now takes --camera-id and --video (defaults unchanged). Camera 2 and 3 run on two different downloaded site videos (one mostly compliant, one with more violations). Result: camera 2 = 5 episodes, camera 3 = 3 episodes.
+- Evidence frames now carry the violation bounding box and label (bbox_lookup keyed by (track_id, frame), nearest-frame fallback). Regenerated for cameras 2 and 3; visual check in the dashboard still to do. Older evidence images have no box.
+- MLflow: tracked a 5-epoch demo training run, backfilled v1 as a baseline run, registered both in the Model Registry (v1 = alias production, v2 = alias candidate). inference_service.py and live_inference_service.py now load the production model via src/model_registry.py instead of a hardcoded path. Verified: same 3 episodes on camera 3 as with the hardcoded file.
+
+### Bugs found
+1. Fake data: the dashboard camera filter showed cameras 1, 2, 3. Cause: seed.py had inserted 3297 random rows. Giveaway: every timestamp shared the same microseconds, because timedelta only shifts days/hours/minutes. Deleted and replaced with real simulated cameras.
+2. API silently dropped track_id, ended_at and evidence_uri: ViolationCreate did not declare them and Pydantic ignores unknown fields. Fixed in src/api/main.py, verified with a curl round trip. The 2403 older camera 1 rows keep NULL (not recoverable: no track_id in Postgres, no evidence_uri in the silver archive).
+3. pandas gotcha: NULLs become NaN, which is truthy in Python, so `if value and os.path.exists(value)` crashed. Use pd.notna(). Also, any NaN turns an int column into float64 (track_id shown as 343.0).
+4. LocalStack loses its buckets on container restart (state in memory) -> NoSuchBucket, hit twice. Fix: get_s3_client() now creates the bucket if missing (idempotent init) in both services.
+5. MLflow 3.x refuses the old ./mlruns file backend; needs a database backend (sqlite:///mlflow.db).
+6. Python 3.14 uses 'forkserver': DataLoader workers re-import the main script, so a training script without an `if __name__ == "__main__"` guard re-ran itself. Fixed with main() + guard.
+7. Ultralytics has its own built-in MLflow hook (duplicate runs in a stray 'runs/detect' experiment). Disabled, we log manually to learn the API. Ultralytics also nests save_dir as runs/detect/runs/detect/<name>; read model.trainer.save_dir instead of guessing.
+8. mlflow.register_model rejects a plain .pt logged with log_artifact (needs a logged_model). client.create_model_version(source=<artifact path>) works.
+9. 11 events from an earlier live run were stuck in Kafka; the consumer dead-lettered them while the API was down, replay_dead_letter.py recovered all 11.
+
+### MLflow numbers (honest)
+- Demo run, 5 epochs: mAP50 0.736, precision 0.828, recall 0.669 (NO-Mask recall 0.459).
+- v1, 50 epochs (from docs/training_results_v1.md): mAP50 0.810, precision 0.918, recall 0.759.
+- Only epochs differs between the two runs. One run per config, so no variance estimate. v1 is backfilled (tagged), its mAP50-95 is not logged because it is not in the doc.
+
+### Deferred / known limits
+- Real model-improvement experiments (recall on NO-* classes) stay at the end of the project.
+- mlflow.db and mlruns/ are gitignored: the registry exists only locally. A fresh clone rebuilds it with log_v1_baseline.py, train_with_mlflow.py, register_models.py.
+- Cameras run by hand. Production would run one managed service per camera with auto-restart (docker compose restart policy / systemd).
+- get_s3_client is duplicated in both inference services.
+- End-of-project: Python syntax review + full interview-prep review.
