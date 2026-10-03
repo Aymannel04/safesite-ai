@@ -26,13 +26,15 @@ import os
 from datetime import datetime, timedelta
 
 import boto3
+from botocore.exceptions import ClientError
 import cv2
 from kafka import KafkaProducer
 from ultralytics import YOLO
 
+from src.model_registry import get_model_path
+
 from src.episodes import detect_episodes
 
-MODEL_PATH = "models/yolov8s_ppe_v1.pt"
 VIDEO_PATH = "data/samples/test_video.mp4"
 KAFKA_BROKER = "localhost:9092"
 EVENTS_TOPIC = "events"
@@ -46,13 +48,21 @@ os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 
 def get_s3_client():
-    return boto3.client(
+    s3 = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
         aws_access_key_id="test",
         aws_secret_access_key="test",
         region_name="us-east-1",
     )
+    # LocalStack keeps its state in memory, so the bucket disappears whenever
+    # the container restarts. Create it if missing instead of crashing later.
+    try:
+        s3.head_bucket(Bucket=S3_BUCKET)
+    except ClientError:
+        s3.create_bucket(Bucket=S3_BUCKET)
+        print(f"Created missing bucket {S3_BUCKET}")
+    return s3
 
 
 def archive_to_s3(s3, key, data):
@@ -62,7 +72,7 @@ def archive_to_s3(s3, key, data):
 
 
 def run_detection_and_tracking():
-    model = YOLO(MODEL_PATH)
+    model = YOLO(get_model_path())
     results = model.track(source=VIDEO_PATH, tracker="bytetrack.yaml", stream=True, verbose=False, device=0)
 
     detections = []
