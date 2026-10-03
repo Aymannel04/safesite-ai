@@ -8,11 +8,16 @@ Run with: streamlit run src/dashboard.py
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 import psycopg2
 import streamlit as st
 from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src import drift  # noqa: E402
 
 load_dotenv()
 
@@ -96,3 +101,44 @@ if len(filtered) > 0:
         st.info("No evidence image available for this violation (recorded before evidence tracking was fixed, or file missing).")
 else:
     st.info("No violations match the current filters.")
+# --- Data drift ---
+st.subheader("Data drift between cameras")
+
+
+@st.cache_data(ttl=30)
+def cached_bronze(camera_id):
+    df, _ = drift.load_bronze(camera_id)
+    return df
+
+
+try:
+    bronze_cameras = drift.list_bronze_cameras()
+except Exception as exc:
+    bronze_cameras = []
+    st.info(f"Data lake unavailable (is LocalStack running?): {exc}")
+
+if len(bronze_cameras) >= 2:
+    pick1, pick2 = st.columns(2)
+    ref_cam = pick1.selectbox("Reference camera", bronze_cameras, index=0)
+    cur_cam = pick2.selectbox("Current camera", bronze_cameras, index=1)
+    result = drift.compare(cached_bronze(ref_cam), cached_bronze(cur_cam))
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("PSI on box-type mix", f"{result['psi']:.3f}", result["verdict"], delta_color="off", delta_arrow="off")
+    k2.metric("Boxes/frame shift (KS D)", f"{result['ks_d']:.3f}")
+    k3.metric(
+        "Violation share",
+        f"{result['cur_violation_share']:.1%}",
+        f"reference {result['ref_violation_share']:.1%}",
+        delta_color="off", delta_arrow="off",
+    )
+    st.dataframe(result["mix"].round(3), use_container_width=True)
+    st.caption(
+        "Drift means the data changed, not that the model got worse: confirming "
+        "a degradation needs labeled images from the new scene. PSI: <0.1 stable, "
+        "0.1-0.25 watch, >0.25 drift."
+    )
+elif not bronze_cameras:
+    pass
+else:
+    st.info("Need bronze data for at least two cameras.")

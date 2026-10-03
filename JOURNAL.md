@@ -260,3 +260,13 @@ Day 1, and it caught two genuinely significant, previously invisible bugs.
 - Cameras run by hand. Production would run one managed service per camera with auto-restart (docker compose restart policy / systemd).
 - get_s3_client is duplicated in both inference services.
 - End-of-project: Python syntax review + full interview-prep review.
+
+### Day 22 (cont.) - Data drift detection
+
+- New: src/drift.py (KS test on boxes-per-frame, PSI on box-type mix, stable <0.1 / watch 0.1-0.25 / drift >0.25), scripts/drift_report.py (run with `python3 -m scripts.drift_report --reference 2 --current 3`), and a "Data drift between cameras" section in the dashboard.
+- Data lake finding: bronze/silver keys had no camera in them (bronze/<run_id>/...), so a run could not be tied to a camera except by guessing from file size, and a verification rerun had created a duplicate camera 3 run that would have double-counted. Keys are now partitioned: bronze/camera_id=<n>/run_id=<id>/detections.json (same for silver). The live service still uses its own key format.
+- LocalStack keeps state in memory, so history disappears on container restart: a drift baseline cannot depend on the lake surviving. No bronze exists for camera 1 anymore.
+- Result, camera 2 (reference) vs camera 3: boxes/frame 6.16 -> 10.41 (KS D = 0.482), violation share 6.7% -> 1.0%, PSI on type mix = 0.136 -> "watch" (driven mostly by NO-Safety Vest 6.1% -> 0.6%). Sanity check: camera 3 vs itself gives PSI 0 and KS D 0. CLI and dashboard give identical numbers.
+- What this does and does not show: two different sites, so this is a cross-site shift, not drift over time. Drift is not degradation: confirming the model got worse needs labeled images from the new scene.
+- Known limits: bronze keeps a label only for NO-* classes (other classes are None) and no model confidence, so those signals are not available; KS p-values are optimistic because frames of a video are autocorrelated (read the effect size D, not p); PSI is sensitive to rare categories; reference camera 2 is not the training distribution.
+- Dashboard detail: st.metric draws an up arrow on text deltas, which showed "up" for a share that went down; fixed with delta_arrow="off".
