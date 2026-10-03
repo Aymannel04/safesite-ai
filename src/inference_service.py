@@ -126,12 +126,12 @@ def main():
     detections, bbox_lookup = run_detection_and_tracking()
     print(f"Collected {len(detections)} raw detections")
 
-    archive_to_s3(s3, f"bronze/{run_id}/detections.json", detections)
+    archive_to_s3(s3, f"bronze/camera_id={CAMERA_ID}/run_id={run_id}/detections.json", detections)
 
     episodes = detect_episodes(detections)
     print(f"Detected {len(episodes)} violation episodes")
 
-    archive_to_s3(s3, f"silver/{run_id}/episodes.json", episodes)
+    archive_to_s3(s3, f"silver/camera_id={CAMERA_ID}/run_id={run_id}/episodes.json", episodes)
 
     run_start_time = datetime.now()
 
