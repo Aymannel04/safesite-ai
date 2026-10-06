@@ -10,3 +10,4 @@ mlflow.db
 mlruns/
 airflow/logs/
 airflow/plugins/
+eval_results.json

@@ -38,8 +38,8 @@ def load_schema_context() -> str:
     )
 
 
-def build_graph():
-    llm = get_llm()
+def build_graph(llm=None):
+    llm = llm or get_llm()
     schema = load_schema_context()
 
     def generate_sql(s: State) -> State:
