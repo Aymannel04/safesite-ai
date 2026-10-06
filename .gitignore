@@ -8,3 +8,5 @@ runs/
 !models/*.pt
 mlflow.db
 mlruns/
+airflow/logs/
+airflow/plugins/
