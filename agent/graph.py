@@ -47,7 +47,7 @@ def build_graph(llm=None):
             "Tu es un expert SQL PostgreSQL. Réponds UNIQUEMENT par UNE requête SELECT, sans explication.\n"
             "Utilise seulement les tables ci-dessous, toujours avec le préfixe gold.\n"
             "Si la question ne peut PAS être répondue avec ces tables (sujet sans rapport, ou demande de "
-            "modifier/supprimer des données), réponds exactement : IMPOSSIBLE: <raison courte>. "
+            "modifier/supprimer des données), réponds exactement : IMPOSSIBLE: <raison courte, dans la langue de la question>. "
             "N'invente jamais de valeur.\n\n"
             f"{schema}\n\nQuestion : {s['question']}\n"
         )

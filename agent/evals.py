@@ -14,6 +14,8 @@ TOTAL = "SELECT SUM(total_violations) FROM gold.daily_summary"
 ANSWERABLE = [
     ("Combien de violations au total ?", TOTAL, False),
     ("What is the total number of violations?", TOTAL, False),
+    ("Combien de violations de type no_vest au total, toutes caméras ?",
+     "SELECT SUM(violation_count) FROM gold.violations_hourly WHERE violation_type = 'no_vest'", False),
     ("Combien de violations par caméra ?",
      "SELECT camera_id, SUM(total_violations) FROM gold.daily_summary GROUP BY camera_id", False),
     ("Quel jour la caméra 1 a-t-elle eu le plus de violations ?",
