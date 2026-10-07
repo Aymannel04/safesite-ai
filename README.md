@@ -42,7 +42,7 @@ docker compose -f docker-compose.airflow.yml up -d
 streamlit run src/dashboard.py
 ```
 
-Variables `.env` (voir `.env.example`) : `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`, `ROBOFLOW_API_KEY`, `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, `AIRFLOW_UID`, `AGENT_PG_USER` / `AGENT_PG_PASSWORD` (rôle lecture seule), `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL`, `GOOGLE_API_KEY`, `GEMINI_MODEL`. Ne jamais committer `.env`.
+Variables `.env` (voir `.env.example`) : `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`, `ROBOFLOW_API_KEY`, `AIRFLOW_UID`, `AGENT_PG_USER` / `AGENT_PG_PASSWORD` (rôle lecture seule), `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL`, `GOOGLE_API_KEY`, `GEMINI_MODEL`. Ne jamais committer `.env`.
 
 ## Commandes utiles
 
