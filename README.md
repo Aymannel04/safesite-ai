@@ -68,7 +68,7 @@ Deux barrières indépendantes pour l'agent : validateur `agent/sql_guard.py` (u
 
 ## Limites connues
 
-- Les horodatages de la caméra 1 sont synthétiques (pic du 1er octobre, trou du 24 au 30 septembre) : les tendances par jour de cette caméra ne reflètent pas un site réel.
+- Les horodatages de la caméra 1 sont synthétiques : les tendances par jour de cette caméra ne reflètent pas un site réel.
 - Le lac LocalStack n'est pas persistant : malgré le volume `localstack_data`, le bucket a disparu après un `docker compose restart`. Après un redémarrage, reconstruire avec `scripts/rebuild_bronze.py` (jamais en rejouant `inference_service.py`, qui créerait des doublons). Les 2414 lignes de la caméra 1 en base ne sont pas reproduites par les 11 épisodes du bronze reconstruit.
 - Pas d'authentification sur le dashboard, qui utilise un rôle Postgres administrateur.
 - Le tableau d'événements bruts affiche les étiquettes d'origine ; seul le gold est normalisé.
