@@ -1,8 +1,11 @@
 """
-Streamlit dashboard for SafeSite AI - reads violations directly from
-Postgres and displays them as a live, filterable view: KPI summary,
-violations-over-time chart, violations-by-type chart, and a recent-events
-table.
+Streamlit dashboard for SafeSite AI.
+
+- Aggregates (KPIs, charts) come from the GOLD layer (Postgres schema `gold`, built nightly by the
+  Airflow DAG gold_daily): one canonical label per violation type, same numbers as the SQL agent.
+- The "Recent violations" table and the evidence viewer need event-level detail (track, confidence,
+  evidence image) that gold no longer has, so they read the raw table `public.violations`.
+- Data drift reads the bronze layer of the data lake (LocalStack S3).
 
 Run with: streamlit run src/dashboard.py
 """
@@ -24,15 +27,20 @@ load_dotenv()
 st.set_page_config(page_title="SafeSite AI Dashboard", layout="wide")
 
 
-@st.cache_data(ttl=10)
-def load_violations():
-    conn = psycopg2.connect(
+def connect():
+    return psycopg2.connect(
         host="localhost",
         port=5432,
         dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
     )
+
+
+@st.cache_data(ttl=10)
+def load_violations():
+    """Raw events (audit and evidence)."""
+    conn = connect()
     df = pd.read_sql_query(
         "SELECT id, camera_id, track_id, violation_type, confidence, started_at, evidence_uri FROM violations ORDER BY started_at DESC",
         conn,
@@ -42,53 +50,85 @@ def load_violations():
     return df
 
 
+@st.cache_data(ttl=30)
+def load_gold():
+    """Hourly aggregates with canonical violation types."""
+    conn = connect()
+    df = pd.read_sql_query(
+        "SELECT hour, camera_id, violation_type, violation_count, avg_confidence, computed_at FROM gold.violations_hourly",
+        conn,
+    )
+    conn.close()
+    df["hour"] = pd.to_datetime(df["hour"])
+    return df
+
+
 df = load_violations()
+gold = load_gold()
 
 st.title("SafeSite AI - PPE Compliance Dashboard")
+
+if gold.empty:
+    st.warning("The gold layer is empty: run the Airflow DAG gold_daily first.")
+    st.stop()
+
+st.caption(f"Aggregates from the gold layer, last computed {gold['computed_at'].max():%Y-%m-%d %H:%M}")
 
 # --- Sidebar filters ---
 st.sidebar.header("Filters")
 
-camera_options = ["All"] + sorted(df["camera_id"].unique().tolist())
+camera_options = ["All"] + sorted(gold["camera_id"].unique().tolist())
 selected_camera = st.sidebar.selectbox("Camera", camera_options)
 
-type_options = ["All"] + sorted(df["violation_type"].unique().tolist())
-selected_type = st.sidebar.selectbox("Violation type", type_options)
+type_options = ["All"] + sorted(gold["violation_type"].unique().tolist())
+selected_type = st.sidebar.selectbox("Violation type (aggregates)", type_options)
 
-filtered = df.copy()
+g = gold.copy()
+raw = df.copy()
 if selected_camera != "All":
-    filtered = filtered[filtered["camera_id"] == selected_camera]
+    g = g[g["camera_id"] == selected_camera]
+    raw = raw[raw["camera_id"] == selected_camera]
 if selected_type != "All":
-    filtered = filtered[filtered["violation_type"] == selected_type]
+    g = g[g["violation_type"] == selected_type]
 
-# --- KPI row ---
+# --- KPI row (gold) ---
+total = int(g["violation_count"].sum())
+weighted = g.dropna(subset=["avg_confidence"])
+avg_conf = (
+    (weighted["avg_confidence"] * weighted["violation_count"]).sum() / weighted["violation_count"].sum()
+    if len(weighted) and weighted["violation_count"].sum()
+    else None
+)
 col1, col2, col3 = st.columns(3)
-col1.metric("Total violations", len(filtered))
-col2.metric("Unique violation types", filtered["violation_type"].nunique())
-col3.metric("Average confidence", f"{filtered['confidence'].mean():.2f}" if len(filtered) else "N/A")
+col1.metric("Total violations", total)
+col2.metric("Unique violation types", g["violation_type"].nunique())
+col3.metric("Average confidence", f"{avg_conf:.2f}" if avg_conf is not None else "N/A")
 
-# --- Charts ---
+# --- Charts (gold) ---
 st.subheader("Violations by type")
-st.bar_chart(filtered["violation_type"].value_counts())
+st.bar_chart(g.groupby("violation_type")["violation_count"].sum())
 
-st.subheader("Violations over time")
-timeline = filtered.set_index("started_at").resample("1min").size()
-st.line_chart(timeline)
+st.subheader("Violations per day")
+st.line_chart(g.groupby(g["hour"].dt.floor("D"))["violation_count"].sum())
 
-# --- Table ---
-st.subheader("Recent violations")
-st.dataframe(filtered.head(100), use_container_width=True)
+# --- Table (raw events) ---
+st.subheader("Recent violations (raw events)")
+st.caption(
+    "Event-level detail read from public.violations: labels are shown as recorded (not normalised). "
+    "The camera filter applies here; the type filter applies to the aggregates above only."
+)
+st.dataframe(raw.head(100), use_container_width=True)
 
 # --- Evidence viewer ---
 st.subheader("Evidence viewer")
-if len(filtered) > 0:
-    options = filtered.head(100).apply(
+if len(raw) > 0:
+    options = raw.head(100).apply(
         lambda row: f"#{row['id']} | camera {row['camera_id']} | {row['violation_type']} | {row['started_at']}",
         axis=1,
     ).tolist()
     selected = st.selectbox("Pick a violation to inspect", options)
     selected_id = int(selected.split("|")[0].strip().lstrip("#"))
-    row = filtered[filtered["id"] == selected_id].iloc[0]
+    row = raw[raw["id"] == selected_id].iloc[0]
 
     if pd.notna(row["evidence_uri"]) and os.path.exists(row["evidence_uri"]):
         track_label = int(row["track_id"]) if pd.notna(row["track_id"]) else "N/A"
