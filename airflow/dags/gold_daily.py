@@ -2,6 +2,7 @@
 
 Chain: resolve_day -> check_sources -> write_gold -> quality_check
 Idempotent: a day's gold rows are deleted then rewritten in one transaction.
+Violation types are normalised to canonical labels (TYPE_MAP) in the hourly table.
 """
 import os
 from datetime import timedelta
@@ -16,6 +17,19 @@ except ImportError:
     from airflow.exceptions import AirflowFailException, AirflowSkipException
 
 DAY_FILTER = "started_at >= %s::date AND started_at < %s::date + 1"
+
+# Raw labels differ between sources (synthetic batch: no_*, model output: NO-*).
+# Gold stores ONE canonical label per concept; public.violations keeps the raw one.
+TYPE_MAP = {
+    "NO-Hardhat": "no_helmet",
+    "NO-Safety Vest": "no_vest",
+    "NO-Mask": "no_mask",
+}
+TYPE_CASE = (
+    "CASE violation_type "
+    + " ".join(f"WHEN '{raw}' THEN '{canon}'" for raw, canon in TYPE_MAP.items())
+    + " ELSE violation_type END"
+)
 
 
 def get_conn():
@@ -75,7 +89,7 @@ def gold_daily():
                         f"""
                         INSERT INTO gold.violations_hourly
                             (hour, camera_id, violation_type, violation_count, avg_confidence)
-                        SELECT date_trunc('hour', started_at), camera_id, violation_type,
+                        SELECT date_trunc('hour', started_at), camera_id, {TYPE_CASE},
                                COUNT(*), AVG(confidence)
                         FROM public.violations
                         WHERE {DAY_FILTER}
